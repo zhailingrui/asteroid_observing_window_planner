@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="A browser-based proposal observing-window planner for JPL Horizons ephemerides.">
+  <title>Observing Window Planner</title>
+  <style>
+    :root { color-scheme: dark; --ink:#eef4f3; --muted:#9cb1af; --paper:#10201f; --panel:#172b29; --line:#294744; --aqua:#76d4c0; --gold:#ffd166; --rose:#ff8e72; }
+    * { box-sizing:border-box } body { margin:0; background:radial-gradient(circle at 20% 0,#1f4741 0,transparent 35%),var(--paper); color:var(--ink); font:15px/1.45 ui-sans-serif,system-ui,sans-serif; }
+    main { width:min(1200px,calc(100% - 32px)); margin:0 auto; padding:48px 0 72px; } h1 { font-size:clamp(2rem,5vw,3.8rem); letter-spacing:-.045em; margin:0; } h2 { margin:.1rem 0 .55rem; font-size:1.05rem; } .lead { max-width:780px; color:var(--muted); font-size:1.05rem; margin:12px 0 30px; } .eyebrow { text-transform:uppercase; font-size:.72rem; letter-spacing:.12em; color:var(--aqua); font-weight:700; }
+    .grid { display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; } .panel { background:color-mix(in srgb,var(--panel) 91%,transparent); border:1px solid var(--line); border-radius:16px; padding:20px; box-shadow:0 18px 45px #06110f44; }
+    .controls { position:sticky; top:16px; } label { display:block; color:var(--muted); font-size:.82rem; margin:13px 0 4px; } input { width:100%; accent-color:var(--aqua); } input[type=number] { background:#0c1918; color:var(--ink); border:1px solid #395955; border-radius:7px; padding:8px; } input[type=file] { font-size:.76rem; } .hint { color:var(--muted); font-size:.78rem; margin:16px 0 0; }
+    .summary { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; } .stat { min-width:130px; padding:14px; background:#0e1b1a; border-radius:12px; border:1px solid var(--line); } .stat b { display:block; font-size:1.55rem; color:var(--aqua); } .stat span { color:var(--muted); font-size:.76rem; }
+    button { border:1px solid #4a766f; color:#0d201d; background:var(--aqua); font:inherit; font-weight:700; border-radius:8px; padding:9px 12px; cursor:pointer; margin-top:16px; } button:hover { filter:brightness(1.08) } #windows { overflow:auto; } table { width:100%; border-collapse:collapse; min-width:650px; font-variant-numeric:tabular-nums; } th,td { padding:9px 8px; text-align:left; border-bottom:1px solid var(--line); } th { color:var(--muted); font-size:.77rem; font-weight:600; } td { font-size:.86rem; } .chart { width:100%; min-height:250px; margin:18px 0 2px; border:1px solid var(--line); border-radius:12px; background:#0d1b19; } .chart text { fill:#9cb1af; font-size:11px; } .empty { padding:22px 0; color:var(--muted); } .disclaimer { margin-top:22px; color:var(--muted); font-size:.8rem; border-left:3px solid var(--gold); padding-left:12px; }
+    @media(max-width:800px) { main { width:min(100% - 24px,1200px); padding-top:28px } .grid { grid-template-columns:1fr; } .controls { position:static; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">JPL Horizons · proposal screening</div>
+    <h1>Observing Window Planner</h1>
+    <p class="lead">Adjust science and Moon constraints to find contiguous proposal-ready dates. Start with Gault’s 2026–2028 ephemeris, or load a compatible CSV from your computer.</p>
+    <div class="grid">
+      <aside class="panel controls">
+        <h2>Constraints</h2>
+        <label>Ephemeris CSV <input id="file" type="file" accept=".csv,text/csv"></label>
+        <label>Faintest V magnitude <input id="mag" type="number" value="17.5" step="0.1"></label>
+        <label>Minimum solar elongation (°) <input id="elong" type="number" value="120" step="1"></label>
+        <label>Minimum Moon separation (°) <input id="moonsep" type="number" value="45" step="1"></label>
+        <label>Maximum Moon illumination (%) <input id="moonillum" type="number" value="60" step="1"></label>
+        <label>Maximum |orbit-plane angle| (°) <input id="plane" type="number" value="2" step="0.1"></label>
+        <button id="download" type="button">Download candidate CSV</button>
+        <p class="hint">Required columns: <code>date, mag, elong, moon_sep, moon_illum, plane</code>. File processing stays in this browser.</p>
+      </aside>
+      <section>
+        <div class="summary" id="summary"></div>
+        <div class="panel"><h2>Candidate windows</h2><div id="windows"></div></div>
+        <div class="panel" style="margin-top:20px"><h2>Ephemeris context</h2><svg class="chart" id="chart" viewBox="0 0 840 280" role="img" aria-label="Magnitude, solar elongation, Moon separation, and orbit plane angle versus date"></svg><p class="hint">Blue: V magnitude (inverted, left axis); gold: solar elongation; coral: Moon separation; green: absolute orbit-plane angle (right axis).</p></div>
+        <p class="disclaimer">This is a proposal-planning filter, not an observatory schedule. It does not calculate topocentric altitude, airmass, Moon altitude, local horizon, weather, or instrument sensitivity.</p>
+      </section>
+    </div>
+  </main>
+  <script>
+  (() => {
+    const ids = ['mag','elong','moonsep','moonillum','plane']; let rows=[];
+    const n = x => Number.isFinite(Number(x)) ? Number(x) : null;
+    const parse = text => { const lines=text.trim().split(/\r?\n/), keys=lines.shift().split(',').map(s=>s.trim()); return lines.filter(Boolean).map(line=>{const parts=line.split(','); return Object.fromEntries(keys.map((k,i)=>[k,k==='date'?parts[i]?.trim():n(parts[i])]))}).filter(r=>r.date); };
+    const value = id => n(document.getElementById(id).value);
+    const ok = r => r.mag<=value('mag') && r.elong>=value('elong') && r.moon_sep>=value('moonsep') && r.moon_illum<=value('moonillum') && Math.abs(r.plane)<=value('plane');
+    const esc = s => String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    function groups(items) { const all=[]; items.forEach(r=>{const prev=all.at(-1)?.at(-1); if(!prev || (new Date(r.date)-new Date(prev.date))/864e5>1) all.push([r]); else all.at(-1).push(r);}); return all; }
+    function draw() {
+      const candidates=rows.filter(ok), gs=groups(candidates), summary=document.getElementById('summary');
+      summary.innerHTML=`<div class="stat"><b>${candidates.length}</b><span>candidate nights</span></div><div class="stat"><b>${gs.length}</b><span>contiguous windows</span></div><div class="stat"><b>${rows.length ? rows[0].date+' — '+rows.at(-1).date : '—'}</b><span>loaded ephemeris</span></div>`;
+      document.getElementById('windows').innerHTML=gs.length ? `<table><thead><tr><th>Window</th><th>Nights</th><th>Best V</th><th>Mean Moon sep.</th><th>|Plane| range</th></tr></thead><tbody>${gs.map(g=>{const p=g.map(x=>Math.abs(x.plane)), best=Math.min(...g.map(x=>x.mag)), moon=g.reduce((s,x)=>s+x.moon_sep,0)/g.length; return `<tr><td>${esc(g[0].date)} — ${esc(g.at(-1).date)}</td><td>${g.length}</td><td>${best.toFixed(2)}</td><td>${moon.toFixed(1)}°</td><td>${Math.min(...p).toFixed(2)}–${Math.max(...p).toFixed(2)}°</td></tr>`;}).join('')}</tbody></table>` : '<p class="empty">No dates meet every current condition. Try relaxing a threshold.</p>';
+      chart(); window.current=candidates;
+    }
+    function chart() { const svg=document.getElementById('chart'), W=840,H=280,L=48,R=48,T=20,B=30, valid=rows.filter(r=>r.mag!==null&&r.elong!==null); if(!valid.length){svg.innerHTML='';return} const x=i=>L+i*(W-L-R)/(valid.length-1||1), range=(a,b,v)=>T+(b-v)*(H-T-B)/(b-a||1), path=(key, scale)=>valid.map((r,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${scale(r[key]).toFixed(1)}`).join(' '); const mags=valid.map(r=>r.mag), m0=Math.floor(Math.min(...mags)),m1=Math.ceil(Math.max(...mags)), a0=0,a1=180,p0=0,p1=Math.max(5,...valid.map(r=>Math.abs(r.plane))); const ticks=[0,.25,.5,.75,1].map(t=>{const i=Math.round((valid.length-1)*t), r=valid[i]; return `<text x="${x(i)}" y="${H-8}" text-anchor="middle">${r.date.slice(0,7)}</text><line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${H-B}" stroke="#294744"/>`;}).join(''); svg.innerHTML=`<rect width="840" height="280" fill="#0d1b19"/>${ticks}<line x1="${L}" x2="${L}" y1="${T}" y2="${H-B}" stroke="#9cb1af"/><line x1="${W-R}" x2="${W-R}" y1="${T}" y2="${H-B}" stroke="#9cb1af"/><path d="${path('mag',v=>range(m1,m0,v))}" fill="none" stroke="#76d4c0" stroke-width="2"/><path d="${path('elong',v=>range(a0,a1,v))}" fill="none" stroke="#ffd166" stroke-width="1.5"/><path d="${path('moon_sep',v=>range(a0,a1,v))}" fill="none" stroke="#ff8e72" stroke-width="1.5"/><path d="${path('plane',v=>range(p0,p1,Math.abs(v)))}" fill="none" stroke="#92c997" stroke-width="1.5"/><text x="8" y="${T+4}">V ${m0}</text><text x="8" y="${H-B}">V ${m1}</text><text x="${W-38}" y="${T+4}">0–${p1.toFixed(0)}°</text>`; }
+    ids.forEach(id=>document.getElementById(id).addEventListener('input',draw));
+    document.getElementById('file').addEventListener('change',e=>{const f=e.target.files[0];if(f){const reader=new FileReader();reader.onload=()=>{rows=parse(reader.result);draw()};reader.readAsText(f)}});
+    document.getElementById('download').addEventListener('click',()=>{const keys=['date','ra','dec','mag','elong','moon_sep','moon_illum','plane','rate'];const csv=[keys.join(','),...window.current.map(r=>keys.map(k=>r[k]??'').join(','))].join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='candidate_nights.csv';a.click();URL.revokeObjectURL(a.href)});
+    fetch('data.csv').then(r=>r.text()).then(t=>{rows=parse(t);draw()}).catch(()=>{document.getElementById('windows').innerHTML='<p class="empty">Load an ephemeris CSV to begin.</p>'});
+  })();
+  </script>
+</body>
+</html>
